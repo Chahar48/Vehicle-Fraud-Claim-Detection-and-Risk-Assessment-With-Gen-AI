@@ -1,0 +1,48 @@
+# Core
+numpy
+pandas
+scikit-learn
+joblib
+xgboost
+
+# NLP + Embeddings
+sentence-transformers
+faiss-cpu
+
+# OCR + Image processing
+pillow
+pytesseract
+pdf2image
+
+# PDF handling
+PyPDF2
+
+# FastAPI API layer
+fastapi
+uvicorn
+python-multipart
+
+# Streamlit UI
+streamlit
+
+# Date parsing + utilities
+python-dateutil
+
+# Logging & YAML
+pyyaml
+
+# Optional: To avoid image errors
+opencv-python
+
+# For structured configuration
+pydantic>=2.0
+
+# Install tesseract if needed:
+#   Windows: choco install tesseract
+#   Linux: apt install tesseract-ocr
+
+# To avoid I/O issues
+requests
+
+# Optional (recommended)
+tqdm
