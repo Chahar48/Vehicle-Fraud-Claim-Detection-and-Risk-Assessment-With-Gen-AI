@@ -1,0 +1,23 @@
+ocr:
+  engine: "tesseract"
+  language: "eng"
+  dpi: 300
+  max_pages: 20
+
+pdf:
+  prefer_text_extraction: true      # use PyMuPDF/pdfminer if text available
+  fallback_to_ocr: true             # if PDF is scanned
+
+image:
+  allowed_formats:
+    - jpg
+    - jpeg
+    - png
+  resize_width: 1000
+  enable_preprocessing: true        # grayscale, thresholding
+
+text_cleaning:
+  remove_special_chars: true
+  collapse_spaces: true
+  lowercase: true
+  min_confidence: 0.30

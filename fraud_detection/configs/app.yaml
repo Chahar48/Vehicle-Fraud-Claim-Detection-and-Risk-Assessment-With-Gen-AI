@@ -1,0 +1,35 @@
+app:
+  name: "Fraud Detection & Risk Assessment API"
+  version: "1.0.0"
+  environment: "development"
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  reload: true          # disable in production
+  max_upload_size_mb: 20
+
+storage:
+  raw_data_path: "fraud_detection/data/raw"
+  processed_data_path: "fraud_detection/data/processed"
+  features_path: "fraud_detection/data/features"
+  labels_path: "fraud_detection/data/labels"
+
+files:
+  allowed_extensions:
+    - csv
+    - pdf
+    - jpg
+    - jpeg
+    - png
+
+logging:
+  config_path: "fraud_detection/logging/logging_config.yaml"
+  log_level: "INFO"
+
+pipeline:
+  enable_enrichment: true
+  enable_text_embeddings: true
+  enable_model_scoring: true
+  enable_rules_scoring: true
+  enable_explainability: true

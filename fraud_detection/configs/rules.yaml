@@ -1,0 +1,57 @@
+rules:
+  missing_fields:
+    enabled: true
+    penalty: 10
+    required_fields:
+      - claim_id
+      - customer_id
+      - policy_id
+      - claim_amount
+      - description
+      - incident_date
+
+  high_claim_amount:
+    enabled: true
+    penalty: 20
+    ratio_threshold: 0.30       # claim_amount / sum_insured > 30%
+  
+  suspicious_description_keywords:
+    enabled: true
+    penalty: 15
+    keywords:
+      - "stolen"
+      - "total loss"
+      - "not my fault"
+      - "unknown"
+      - "no witness"
+
+  repeated_claims_same_customer:
+    enabled: true
+    penalty: 10
+    threshold: 3                 # more than 3 claims in 6 months
+
+  claim_after_policy_expiry:
+    enabled: true
+    penalty: 25
+
+  invalid_phone_number:
+    enabled: true
+    penalty: 5
+
+  mismatched_policy_ids:
+    enabled: true
+    penalty: 15
+
+  date_inconsistencies:
+    enabled: true
+    penalty: 10
+
+  garage_blacklist:
+    enabled: true
+    penalty: 20
+    blacklist:
+      - "GR999"
+      - "GR777"
+
+overall:
+  max_rule_score: 100

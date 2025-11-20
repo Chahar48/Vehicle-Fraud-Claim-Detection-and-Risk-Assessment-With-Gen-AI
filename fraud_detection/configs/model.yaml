@@ -1,0 +1,30 @@
+models:
+  fraud_classifier:
+    enabled: true
+    model_path: "fraud_detection/models/artifacts/fraud_classifier.pkl"
+    probability_threshold: 0.55     # > 0.55 indicates higher risk
+
+  anomaly_detector:
+    enabled: true
+    model_path: "fraud_detection/models/artifacts/anomaly_detector.pkl"
+    contamination: 0.05
+
+embeddings:
+  enabled: true
+  provider: "sentence-transformers"
+  model_name: "all-MiniLM-L6-v2"
+  similarity_threshold: 0.65
+
+scoring:
+  weights:
+    rules_score: 0.40
+    model_score: 0.40
+    anomaly_score: 0.10
+    text_similarity_score: 0.10
+
+thresholds:
+  approve_below: 30        # fraud score < 30 → Auto-approve
+  manual_review_between:   # 30–70 → Send to HITL
+    - 30
+    - 70
+  reject_above: 70         # fraud score > 70 → High risk
