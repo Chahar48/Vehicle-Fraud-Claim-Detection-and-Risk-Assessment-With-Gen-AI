@@ -1,4 +1,33 @@
-# fraud_detection/preprocessing/field_normalizer.py
+# fraud_detection/preprocessing/normalize_fields.py
+
+"""
+Field Normalization Module
+--------------------------
+Updated for CURRENT project architecture (PHASE 1–17).
+
+This file cleans ONLY the allowed claim fields:
+
+    claim_id
+    customer_id
+    policy_id
+    policy_id_record
+    claim_amount
+    policy_sum_insured
+    incident_date
+    description
+    phone
+    garage_id
+
+No VIN, no city, no policy_end_date, no reported_date.
+
+Output ALWAYS contains:
+- cleaned numeric fields
+- cleaned date (YYYY-MM-DD)
+- cleaned phone
+- cleaned IDs
+- missing_info_flag
+- missing_amount_flag
+"""
 
 import os
 import re
@@ -11,7 +40,7 @@ from fraud_detection.logging.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Project root (env-first)
+# Resolve project root safely
 FD_PROJECT_ROOT = os.environ.get("FD_PROJECT_ROOT")
 if FD_PROJECT_ROOT:
     PROJECT_ROOT = Path(FD_PROJECT_ROOT).resolve()
@@ -19,100 +48,80 @@ else:
     PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-# -------------------------
-# Numeric normalization
-# -------------------------
+# -------------------------------------------------------
+# Currency / Numeric
+# -------------------------------------------------------
 def normalize_currency(val: Optional[Any]) -> Optional[float]:
-    """
-    Convert messy currency strings or numbers to float.
-    Returns None on failure.
-    """
     if val is None:
         return None
-
     try:
+        # Already numeric
         if isinstance(val, (int, float, Decimal)):
-            # guard against NaN/Inf
             v = float(val)
-            if v != v or v == float("inf") or v == float("-inf"):
+            if v != v or v in (float("inf"), float("-inf")):
                 return None
-            return float(v)
+            return v
+
         s = str(val).strip()
         if s == "":
             return None
-        # Remove common currency labels
+
+        # remove currency marks
         s = re.sub(r"(?i)(rs\.?|inr|usd|₹|\$|,)", "", s)
-        # Extract first numeric pattern
+
+        # extract number
         m = re.search(r"[-+]?\d[\d,]*(?:\.\d+)?", s)
         if not m:
             return None
+
         num = m.group().replace(",", "")
-        # use Decimal for safety
-        try:
-            d = Decimal(num)
-            f = float(d)
-            return f
-        except InvalidOperation:
-            return None
+        return float(Decimal(num))
+
     except Exception as e:
-        logger.debug("normalize_currency failed for %s: %s", val, e)
+        logger.debug(f"normalize_currency failed for {val}: {e}")
         return None
 
 
-# -------------------------
+# -------------------------------------------------------
 # Date normalization
-# -------------------------
-def normalize_date(date_val: Optional[Any]) -> Optional[str]:
-    """
-    Convert many date inputs to ISO date string YYYY-MM-DD.
-    Returns None if parsing fails.
-    """
-    if date_val is None:
+# -------------------------------------------------------
+def normalize_date(val: Optional[Any]) -> Optional[str]:
+    if val is None:
         return None
     try:
-        # if already a date/datetime-like object
-        if hasattr(date_val, "strftime"):
-            return date_val.strftime("%Y-%m-%d")
-        s = str(date_val).strip()
+        if hasattr(val, "strftime"):
+            return val.strftime("%Y-%m-%d")
+        s = str(val).strip()
         if s == "":
             return None
-        # Some OCRs give day/month ambiguous; default dayfirst False (US style).
-        dt = date_parser.parse(s, dayfirst=False, fuzzy=True)
+        dt = date_parser.parse(s, fuzzy=True)
         return dt.strftime("%Y-%m-%d")
-    except Exception as e:
-        logger.debug("normalize_date failed for %s: %s", date_val, e)
+    except Exception:
         return None
 
 
-# -------------------------
-# Phone normalization
-# -------------------------
-def normalize_phone(phone_val: Optional[Any], min_digits: int = 6) -> Optional[str]:
-    """
-    Return digits-only phone if it meets min_digits threshold.
-    """
-    if phone_val is None:
+# -------------------------------------------------------
+# Phone
+# -------------------------------------------------------
+def normalize_phone(val: Optional[Any], min_digits: int = 6) -> Optional[str]:
+    if val is None:
         return None
-    s = str(phone_val)
-    digits = "".join(ch for ch in s if ch.isdigit())
+    digits = "".join(ch for ch in str(val) if ch.isdigit())
     if len(digits) < min_digits:
         return None
-    # If international, keep as-is digits (no +). Business logic can add +91 if needed.
     return digits
 
 
-# -------------------------
-# ID / policy normalization
-# -------------------------
-def normalize_policy_id(policy_val: Optional[Any]) -> Optional[str]:
-    if policy_val is None:
+# -------------------------------------------------------
+# IDs
+# -------------------------------------------------------
+def normalize_policy_id(val: Optional[Any]) -> Optional[str]:
+    if val is None:
         return None
-    s = str(policy_val).strip().upper()
-    if s == "":
+    s = str(val).strip().upper()
+    if not s:
         return None
-    # Keep alphanum and hyphens/underscores only
-    s = re.sub(r"[^A-Z0-9\-_]", "", s)
-    return s or None
+    return re.sub(r"[^A-Z0-9\-_]", "", s) or None
 
 
 def normalize_simple_id(val: Optional[Any]) -> Optional[str]:
@@ -124,54 +133,70 @@ def normalize_simple_id(val: Optional[Any]) -> Optional[str]:
     return re.sub(r"\s+", "_", s)
 
 
-# -------------------------
-# Main normalization for a claim dict
-# -------------------------
-def normalize_claim_dict(claim: Dict[str, Any]) -> Dict[str, Any]:
+# -------------------------------------------------------
+# MAIN NORMALIZATION (FINAL)
+# -------------------------------------------------------
+def normalize_claims_df(df):
     """
-    Take a claim dict (possibly from LLM), normalize important fields and
-    return a new dict. This is conservative: it does not fill missing values.
+    Accepts a DataFrame with a single row.
+    Returns a DataFrame with exactly the normalized fields used in pipeline_runner.
     """
-    out = dict(claim)  # shallow copy
 
-    # numeric fields
-    for fld in ["claim_amount", "policy_sum_insured"]:
-        if fld in out:
-            out[fld] = normalize_currency(out.get(fld))
+    if df is None or df.empty:
+        raise ValueError("normalize_claims_df: input DataFrame is empty")
 
-    # dates
-    for fld in ["incident_date", "reported_date", "claim_date"]:
-        if fld in out:
-            out[fld] = normalize_date(out.get(fld))
+    row = df.iloc[0].to_dict()
+    out = {}
 
-    # phones
-    if "phone" in out:
-        out["phone"] = normalize_phone(out.get("phone"))
+    # Required fields — normalize safely
+    out["claim_id"] = row.get("claim_id")
 
-    # policy ids
-    for fld in ["policy_id", "policy_id_record"]:
-        if fld in out:
-            out[fld] = normalize_policy_id(out.get(fld))
+    out["customer_id"] = normalize_simple_id(row.get("customer_id"))
+    out["policy_id"] = normalize_policy_id(row.get("policy_id"))
+    out["policy_id_record"] = normalize_policy_id(row.get("policy_id_record"))
 
-    # simple ids
-    for fld in ["garage_id", "customer_id", "vin"]:
-        if fld in out:
-            out[fld] = normalize_simple_id(out.get(fld))
+    out["claim_amount"] = normalize_currency(row.get("claim_amount"))
+    out["policy_sum_insured"] = normalize_currency(row.get("policy_sum_insured"))
 
-    logger.debug("normalize_claim_dict => %s", {k: v for k, v in out.items() if k in ['claim_id','claim_amount','incident_date','policy_id','phone']})
-    return out
+    out["incident_date"] = normalize_date(row.get("incident_date"))
+
+    out["description"] = (row.get("description") or "").strip()
+
+    out["phone"] = normalize_phone(row.get("phone"))
+    out["garage_id"] = normalize_simple_id(row.get("garage_id"))
+
+    # --- Additional pipeline-required flags ---
+    out["missing_amount_flag"] = int(out["claim_amount"] is None)
+    out["missing_info_flag"] = int(
+        not bool(out["phone"])
+        or not bool(out["garage_id"])
+    )
+
+    logger.debug(f"Normalized claim row => {out}")
+
+    return (
+        # return as DataFrame (pipeline_runner expects this)
+        df.assign(**out)[list(out.keys())]
+    )
 
 
-# -------------------------
-# module test
-# -------------------------
+# -------------------------------------------------------
+# TEST BLOCK
+# -------------------------------------------------------
 if __name__ == "__main__":
-    sample = {
+    import pandas as pd
+
+    sample = pd.DataFrame([{
         "claim_id": "C1001",
-        "claim_amount": "Rs. 5,000.00",
-        "policy_sum_insured": "$10,000",
-        "incident_date": "2/12/2024",
-        "phone": "+91-98765 43210",
-        "policy_id": " pol-123 ",
-    }
-    print(normalize_claim_dict(sample))
+        "customer_id": "cust 77",
+        "policy_id": "pol-123",
+        "policy_id_record": "POL123 ",
+        "claim_amount": "Rs. 5,000.25",
+        "policy_sum_insured": "100000",
+        "incident_date": "02/10/2024",
+        "description": "Minor scratch",
+        "phone": "+91 98765-43210",
+        "garage_id": "GAR 1 ",
+    }])
+
+    print(normalize_claims_df(sample))

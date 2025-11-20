@@ -1,113 +1,95 @@
+# fraud_detection/orchestration/pipeline_runner.py
 """
-pipeline_runner.py
-------------------
-Orchestrates the PoC pipeline for one claim or a batch:
-ingest -> preprocess -> features -> models -> decision -> explain -> save -> (HITL)
+Pipeline runner (robust, defensive).
+Orchestrates:
+  normalize -> attachments/extract -> features -> models -> decision -> explain -> save -> (HITL)
 
-Designed to be imported & used by the API server (run_api.py).
-Uses FD_PROJECT_ROOT environment variable first; falls back to repo-relative paths.
-
-Key guarantees:
-- Consistent use of fraud_detection.store for saving artifacts
-- Conservative fallback behavior: missing scoring modules -> prefer manual_review
-- When action == "manual_review" we enqueue to HITL and store queue_id in result
+Adapted to current architecture where:
+  fraud_detection/features/feature_builder.py
+  fraud_detection/features/similarity_index.py
+exist and expose functions used below.
 """
-
 from __future__ import annotations
 import os
 import json
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 import pandas as pd
 import numpy as np
 
-# logger
-from fraud_detection.logging.logger import get_logger
+# Logging helper: simple fallback if project logger missing
+try:
+    from fraud_detection.logging.logger import get_logger
+    logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger("pipeline_runner")
+    if not logger.handlers:
+        logging.basicConfig(level=logging.INFO)
 
-logger = get_logger(__name__)
-
-# Project root resolution (env-first)
+# Resolve project root (env-first)
 FD_PROJECT_ROOT = os.environ.get("FD_PROJECT_ROOT")
 if FD_PROJECT_ROOT:
     PROJECT_ROOT = Path(FD_PROJECT_ROOT).resolve()
 else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[3]
+    PROJECT_ROOT = Path(__file__).resolve().parents[3]  # go up to repo root
 
-# Results folder under project root
 RESULTS_FOLDER = PROJECT_ROOT / "data" / "results"
 RESULTS_FOLDER.mkdir(parents=True, exist_ok=True)
 
-# Defensive imports (modules may or may not be implemented)
-def _safe_import(name: str):
+
+# ---------------------------
+# Defensive import helper
+# ---------------------------
+def _safe_import(module_path: str):
     try:
-        module = __import__(name, fromlist=["*"])
-        logger.debug("Imported module %s", name)
-        return module
+        mod = __import__(module_path, fromlist=["*"])
+        logger.debug("Imported %s", module_path)
+        return mod
     except Exception as e:
-        logger.warning("Import failed for %s: %s", name, e)
+        logger.debug("Optional import failed %s: %s", module_path, e)
         return None
 
-# prefer explicit imports where available
-file_router = _safe_import("fraud_detection.ingestion.file_router")
-# Preprocessing components
-field_normalizer = _safe_import("fraud_detection.preprocessing.field_normalizer")
-text_cleaner = _safe_import("fraud_detection.preprocessing.text_cleaner")
-schema_validator = _safe_import("fraud_detection.preprocessing.schema_validator")
 
-# feature modules
-feature_builder = _safe_import("fraud_detection.features.feature_builder")
-similarity_index = _safe_import("fraud_detection.features.similarity_index")
+# Preferred modules (may be None)
+normalize_mod = _safe_import("fraud_detection.preprocessing.normalize_fields")
+pdf_extractor_mod = _safe_import("fraud_detection.extraction.pdf_extractor")
+ocr_extractor_mod = _safe_import("fraud_detection.extraction.ocr_extractor")
 
-# generative ai
-embedder = _safe_import("fraud_detection.generative_ai.embedder")
-explain_generator = _safe_import("fraud_detection.generative_ai.explanation_generator")
+# === UPDATED feature modules ===
+feature_builder_mod = _safe_import("fraud_detection.features.feature_builder")
+similarity_mod = _safe_import("fraud_detection.features.similarity_index")
 
-# models
-anomaly_detector = _safe_import("fraud_detection.models.anomaly_detector")
-fraud_classifier = _safe_import("fraud_detection.models.fraud_classifier")
-model_utils = _safe_import("fraud_detection.models.model_utils")
+embedder_mod = _safe_import("fraud_detection.generative_ai.embedder")
+explain_gen_mod = _safe_import("fraud_detection.generative_ai.explain_generator")
+anomaly_mod = _safe_import("fraud_detection.models.anomaly_detector")
+fraud_clf_mod = _safe_import("fraud_detection.models.fraud_classifier")
+model_utils_mod = _safe_import("fraud_detection.models.model_utils")
+external_lookup_mod = _safe_import("fraud_detection.enrichment.external_lookup")
+scoring_mod = _safe_import("fraud_detection.decision_engine.scoring")
+rules_mod = _safe_import("fraud_detection.decision_engine.rules")
+store_mod = _safe_import("fraud_detection.storage.store")
+review_queue_mod = _safe_import("fraud_detection.hitl.review_queue")
+HITL_AVAILABLE = review_queue_mod is not None
 
-# enrichment
-external_lookup = _safe_import("fraud_detection.enrichment.external_lookup")
-
-# decision engine
-scoring = _safe_import("fraud_detection.decision_engine.scoring")
-rules = _safe_import("fraud_detection.decision_engine.rules")
-
-# storage
-store = _safe_import("fraud_detection.storage.store")
-
-# HITL
-review_queue = _safe_import("fraud_detection.hitl.review_queue")
-HITL_AVAILABLE = review_queue is not None
-
-logger.info("Pipeline runner initialized. PROJECT_ROOT=%s HITL_AVAILABLE=%s", PROJECT_ROOT, HITL_AVAILABLE)
 
 # ---------------------------
 # Helpers
 # ---------------------------
-def _now_iso():
+def _now_iso() -> str:
     return datetime.utcnow().isoformat()
 
-def _abs_rel(path: str) -> str:
-    """
-    Convert project-relative path (starting without /) to absolute on disk.
-    Used only for direct file writes when needed; prefer store.save_df/text instead.
-    """
-    p = Path(path)
-    if p.is_absolute():
-        return str(p)
-    return str((PROJECT_ROOT / path).resolve())
 
-def _safe_get(d: Dict[str, Any], k: str, default=None):
-    return d.get(k, default) if isinstance(d, dict) else default
+def _abs_rel(p: str) -> str:
+    pth = Path(p)
+    if pth.is_absolute():
+        return str(pth)
+    return str((PROJECT_ROOT / p).resolve())
+
 
 def _first_or_scalar(x):
-    """
-    Accept possibly iterable or scalar. Return scalar float or 0.0.
-    """
     try:
         if x is None:
             return 0.0
@@ -119,20 +101,19 @@ def _first_or_scalar(x):
     except Exception:
         return 0.0
 
+
 def _save_result_json(claim_id: str, result: Dict[str, Any]) -> str:
     path = RESULTS_FOLDER / f"result_{claim_id}.json"
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2, default=str)
-        logger.info("Saved result JSON for %s -> %s", claim_id, path)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(result, fh, indent=2, default=str)
+        logger.info("Saved result JSON -> %s", path)
     except Exception:
-        logger.exception("Failed to save result JSON for %s", claim_id)
-        raise
+        logger.exception("Failed to save result JSON")
     return str(path)
 
+
 def _append_result_summary(result: Dict[str, Any], csv_rel: str = "data/results/results_summary.csv") -> str:
-    # Use store.save_df when available; otherwise write directly to PROJECT_ROOT
-    csv_path = csv_rel
     rec = {
         "claim_id": result.get("claim_id"),
         "final_score": result.get("final_score"),
@@ -140,27 +121,24 @@ def _append_result_summary(result: Dict[str, Any], csv_rel: str = "data/results/
         "fraud_prob": result.get("fraud_prob"),
         "anomaly_score": result.get("anomaly_score"),
         "similarity_score": result.get("similarity_score"),
-        "blacklist_flag": _safe_get(result.get("enrichment", {}), "blacklist_flag", 0),
+        "blacklist_flag": (result.get("enrichment") or {}).get("blacklist_flag", 0),
         "timestamp": _now_iso()
     }
     df_new = pd.DataFrame([rec])
+    abs_csv = _abs_rel(csv_rel)
     try:
-        if store is not None and hasattr(store, "save_df"):
-            # store.save_df expects a project-relative path like "data/.../file.csv"
-            # use csv_rel as-is
-            abs_csv = _abs_rel(csv_rel)
-            # if file exists, load and concat then save via store.save_df
+        if store_mod is not None and hasattr(store_mod, "save_df"):
+            # store.save_df expects project-relative path in this codebase
             if os.path.exists(abs_csv):
                 df_exist = pd.read_csv(abs_csv)
                 df_out = pd.concat([df_exist, df_new], ignore_index=True)
             else:
                 df_out = df_new
-            store.save_df(df_out, csv_rel)
-            logger.info("Appended result summary via store.save_df -> %s", csv_rel)
-            return str(Path(PROJECT_ROOT) / csv_rel)
+            store_mod.save_df(df_out, csv_rel)
+            logger.info("Appended results via store.save_df -> %s", csv_rel)
+            return str((PROJECT_ROOT / csv_rel).resolve())
         else:
-            # fallback: write directly to resolved path
-            abs_csv = _abs_rel(csv_rel)
+            # fallback write directly
             if os.path.exists(abs_csv):
                 df_exist = pd.read_csv(abs_csv)
                 df_out = pd.concat([df_exist, df_new], ignore_index=True)
@@ -168,25 +146,38 @@ def _append_result_summary(result: Dict[str, Any], csv_rel: str = "data/results/
                 df_out = df_new
             os.makedirs(os.path.dirname(abs_csv), exist_ok=True)
             df_out.to_csv(abs_csv, index=False)
-            logger.warning("storage.store unavailable, saved results_summary directly to %s", abs_csv)
+            logger.info("Saved results_summary directly -> %s", abs_csv)
             return abs_csv
     except Exception:
-        logger.exception("Failed to append result summary CSV")
-        raise
+        logger.exception("Failed to append result summary")
+        # try best-effort direct write
+        try:
+            os.makedirs(os.path.dirname(abs_csv), exist_ok=True)
+            df_new.to_csv(abs_csv, index=False)
+            return abs_csv
+        except Exception:
+            logger.exception("Final fallback failed writing summary")
+            return abs_csv
 
-def _ensure_list(x) -> List[str]:
+
+def _ensure_list(x: Optional[List[str]]) -> List[str]:
     if x is None:
         return []
     if isinstance(x, list):
         return x
     return [x]
 
+
 # ---------------------------
-# Main pipeline: single claim
+# Main pipeline for single claim
 # ---------------------------
 def run_single_claim(claim_record: Dict[str, Any], attachments: Optional[List[str]] = None, history_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+    """
+    Process one claim dict end-to-end and return result dict.
+    Always ensures 'action' and 'final_score' keys exist.
+    """
     claim_id = str(claim_record.get("claim_id") or f"noid_{int(datetime.utcnow().timestamp())}")
-    logger.info("Running pipeline for claim_id=%s", claim_id)
+    logger.info("Pipeline start claim_id=%s", claim_id)
 
     result: Dict[str, Any] = {
         "claim_id": claim_id,
@@ -195,82 +186,94 @@ def run_single_claim(claim_record: Dict[str, Any], attachments: Optional[List[st
         "errors": []
     }
 
-    # 1) Normalization (field_normalizer.normalize_claims_df)
+    # -------------------------
+    # 1) Normalization
+    # -------------------------
     norm_row: Dict[str, Any] = {}
     try:
-        if field_normalizer is None or not hasattr(field_normalizer, "normalize_claims_df"):
-            raise RuntimeError("field_normalizer.normalize_claims_df not available")
-        df_norm = field_normalizer.normalize_claims_df(pd.DataFrame([claim_record]))
-        norm_row = df_norm.iloc[0].to_dict()
-        # ensure missing flags present
+        if normalize_mod is None:
+            raise RuntimeError("normalize_fields module unavailable")
+        # prefer DataFrame-style normalizer function names
+        if hasattr(normalize_mod, "normalize_claims_df"):
+            df_norm = normalize_mod.normalize_claims_df(pd.DataFrame([claim_record]))
+            norm_row = df_norm.iloc[0].to_dict()
+        elif hasattr(normalize_mod, "normalize_claim_dict"):
+            norm_row = normalize_mod.normalize_claim_dict(claim_record)
+        else:
+            # fallback: try generic function named "normalize"
+            if hasattr(normalize_mod, "normalize"):
+                maybe = normalize_mod.normalize(claim_record)
+                if isinstance(maybe, dict):
+                    norm_row = maybe
+                else:
+                    norm_row = dict(claim_record)
+            else:
+                raise RuntimeError("normalize_fields has no usable API")
+        # ensure expected flags
         norm_row.setdefault("missing_amount_flag", int(norm_row.get("claim_amount") in [None, -1]))
-        norm_row.setdefault("missing_info_flag", int(not bool(norm_row.get("phone")) or not bool(norm_row.get("garage_id")) or not bool(norm_row.get("vin"))))
+        norm_row.setdefault("missing_info_flag", int(not bool(norm_row.get("phone")) or not bool(norm_row.get("garage_id"))))
         result["normalized"] = norm_row
         result["steps"]["normalize"] = "ok"
     except Exception as e:
         logger.exception("Normalization failed: %s", e)
         result["errors"].append(f"normalize_error:{e}")
-        # fallback to raw claim values
-        norm_row = claim_record.copy()
+        # safe fallback to claim_record copy
+        norm_row = dict(claim_record)
         norm_row.setdefault("description", claim_record.get("description", ""))
         norm_row.setdefault("claim_amount", claim_record.get("claim_amount"))
         norm_row.setdefault("policy_sum_insured", claim_record.get("policy_sum_insured"))
-        norm_row.setdefault("missing_info_flag", int(not bool(claim_record.get("phone")) or not bool(claim_record.get("garage_id")) or not bool(claim_record.get("vin"))))
+        norm_row.setdefault("missing_info_flag", int(not bool(claim_record.get("phone")) or not bool(claim_record.get("garage_id"))))
         result["normalized"] = norm_row
         result["steps"]["normalize"] = "fallback"
 
-    # 2) Process attachments (route + extract text)
+    # -------------------------
+    # 2) Attachments: route & extract
+    # -------------------------
     attachments = _ensure_list(attachments)
     extracted_texts: List[str] = []
     try:
         for p in attachments:
             routed = p
+            # file_router optional (may be in ingestion.file_router)
             try:
-                if file_router is not None and hasattr(file_router, "route_file"):
-                    routed = file_router.route_file(p)
+                file_router_mod = _safe_import("fraud_detection.ingestion.file_router")
+                if file_router_mod and hasattr(file_router_mod, "route_file"):
+                    routed = file_router_mod.route_file(p)
             except Exception:
-                logger.warning("file_router.route_file failed for %s; using original path", p)
                 routed = p
 
-            ext = Path(routed).suffix.lower()
+            suffix = Path(routed).suffix.lower()
             try:
-                if ext == ".pdf":
-                    # pdf extractor may be in extraction package; try known names
-                    pdf_mod = _safe_import("fraud_detection.extraction.ocr_extractor")
-                    if pdf_mod and hasattr(pdf_mod, "extract_text_from_pdf"):
-                        txt, summary = pdf_mod.extract_text_from_pdf(routed)
-                        extracted_texts.append(txt or "")
-                    else:
-                        logger.debug("PDF extractor not available for %s", routed)
-                elif ext in [".png", ".jpg", ".jpeg", ".tiff"]:
-                    img_mod = _safe_import("fraud_detection.extraction.ocr_extractor")
-                    if img_mod and hasattr(img_mod, "extract_text_from_image"):
-                        txt = img_mod.extract_text_from_image(routed)
-                        extracted_texts.append(txt or "")
-                    else:
-                        logger.debug("Image extractor not available for %s", routed)
+                if suffix == ".pdf" and pdf_extractor_mod is not None and hasattr(pdf_extractor_mod, "extract_text_from_pdf"):
+                    txt, summary = pdf_extractor_mod.extract_text_from_pdf(routed)
+                    extracted_texts.append(txt or "")
+                elif suffix in [".png", ".jpg", ".jpeg", ".tiff"] and ocr_extractor_mod is not None and hasattr(ocr_extractor_mod, "extract_text_from_image"):
+                    txt = ocr_extractor_mod.extract_text_from_image(routed)
+                    extracted_texts.append(txt or "")
                 else:
-                    logger.debug("Unsupported attachment extension %s for %s", ext, routed)
+                    logger.debug("No extractor for %s (ext=%s)", routed, suffix)
             except Exception as ex:
-                logger.exception("Attachment extraction failed for %s: %s", routed, ex)
+                logger.exception("Attachment extraction error %s: %s", routed, ex)
         result["steps"]["attachments"] = f"extracted_{len(extracted_texts)}"
     except Exception as e:
-        logger.exception("Attachment processing error: %s", e)
+        logger.exception("Attachments processing top-level error: %s", e)
         result["errors"].append(f"attachments_error:{e}")
         result["steps"]["attachments"] = "error"
 
-    # 3) Assemble full_text
+    # -------------------------
+    # 3) Build full_text and save
+    # -------------------------
     try:
         desc = str(norm_row.get("description", "") or "")
         full_text = desc
         if extracted_texts:
             full_text = desc + "\n\n" + "\n\n".join(extracted_texts)
-        # Save extracted text via store if available
+        # try saving via store
         try:
-            if store is not None and hasattr(store, "save_text"):
-                store.save_text(claim_id, full_text)
+            if store_mod is not None and hasattr(store_mod, "save_text"):
+                store_mod.save_text(claim_id, full_text)
         except Exception:
-            logger.exception("Failed to save extracted text via store")
+            logger.debug("store.save_text failed")
         result["full_text"] = full_text[:10000]
         result["steps"]["text"] = "ok"
     except Exception as e:
@@ -279,109 +282,152 @@ def run_single_claim(claim_record: Dict[str, Any], attachments: Optional[List[st
         result["full_text"] = norm_row.get("description", "")
         result["steps"]["text"] = "error"
 
-    # 4) Numeric features
+    # -------------------------
+    # 4) Numeric features (USE feature_builder_mod)
+    # -------------------------
     features_df = None
     feature_row: Dict[str, Any] = {}
     try:
-        if feature_builder is None or not hasattr(feature_builder, "build_numeric_features"):
-            raise RuntimeError("feature_builder.build_numeric_features not available")
-        features_df = feature_builder.build_numeric_features(pd.DataFrame([norm_row]), history_df)
+        if feature_builder_mod is None:
+            raise RuntimeError("feature_builder module missing (fraud_detection.features.feature_builder)")
+        # Try DataFrame API first
+        if hasattr(feature_builder_mod, "build_features_from_df"):
+            try:
+                features_df = feature_builder_mod.build_features_from_df(pd.DataFrame([norm_row]), history_df=history_df)
+            except Exception:
+                # try dict-level API next
+                features_df = None
+        if features_df is None and hasattr(feature_builder_mod, "build_features_from_dict"):
+            fr = feature_builder_mod.build_features_from_dict(norm_row, history_df=history_df)
+            # convert single dict to DataFrame-like for consistency
+            features_df = pd.DataFrame([fr])
+        # Final fallback: if module exposes build_numeric_features (compat)
+        if features_df is None and hasattr(feature_builder_mod, "build_numeric_features"):
+            features_df = feature_builder_mod.build_numeric_features(pd.DataFrame([norm_row]), history_df)
+        if features_df is None:
+            raise RuntimeError("feature_builder provided no usable build function")
         feature_row = features_df.iloc[0].to_dict()
         result["features"] = feature_row
         result["steps"]["numeric_features"] = "ok"
     except Exception as e:
-        logger.exception("Numeric features build failed: %s", e)
+        logger.exception("Numeric features failed: %s", e)
         result["errors"].append(f"numeric_features_error:{e}")
         result["steps"]["numeric_features"] = "error"
+        feature_row = {}
+        result["features"] = {}
 
-    # 5) Embedding + similarity
+    # -------------------------
+    # 5) Embedding + similarity (best-effort) using similarity_mod
+    # -------------------------
     similarity_score = 0.0
-    emb_vector = None
     try:
-        if embedder is not None and hasattr(embedder, "embed_text"):
+        # Try FAISS-based historical similarity if embeddings file exists
+        emb_vec = None
+        # Build query vector using similarity_mod.get_embeddings or embedder_mod
+        if similarity_mod is not None and hasattr(similarity_mod, "get_embeddings"):
             try:
-                emb_vector = embedder.embed_text(full_text)
-            except Exception as e:
-                logger.exception("embedder.embed_text failed: %s", e)
-                emb_vector = None
-        # similarity: use similarity_index if available, else try feature-level quick similarity
-        if emb_vector is not None and similarity_index is not None and hasattr(similarity_index, "load_embeddings"):
+                qvecs = similarity_mod.get_embeddings([result.get("full_text", "") or ""])
+                if isinstance(qvecs, (list, np.ndarray)) and len(qvecs) > 0:
+                    emb_vec = np.array(qvecs[0], dtype="float32")
+            except Exception:
+                emb_vec = None
+
+        # If no embedding model above, try generic embedder_mod
+        if emb_vec is None and embedder_mod is not None and hasattr(embedder_mod, "embed_text"):
             try:
-                emb_path = "data/processed/embeddings.npy"
-                abs_emb = _abs_rel(emb_path)
-                if os.path.exists(abs_emb):
-                    hist_emb = similarity_index.load_embeddings(emb_path)
-                    index = similarity_index.build_faiss_index(hist_emb)
-                    dists, idxs = similarity_index.similarity_search(index, emb_vector, k=1)
-                    # convert L2 distance -> similarity in range 0..1 (simple mapping)
-                    similarity_score = float(np.clip(1.0 / (1.0 + float(dists[0])), 0.0, 1.0))
-                else:
-                    # fallback to quick_similarity if exists
-                    if similarity_index is not None and hasattr(similarity_index, "quick_similarity"):
-                        similarity_score = float(similarity_index.quick_similarity(full_text))
+                emb = embedder_mod.embed_text(result.get("full_text", "") or "")
+                if emb is not None:
+                    emb_vec = np.array(emb, dtype="float32")
+            except Exception:
+                emb_vec = None
+
+        # Now, if we have a similarity module with FAISS helpers and a saved embeddings file, compute similarity
+        emb_file = _abs_rel("data/processed/embeddings.npy")
+        if emb_vec is not None and similarity_mod is not None and hasattr(similarity_mod, "build_faiss_index") and os.path.exists(emb_file):
+            try:
+                hist_emb = np.load(emb_file)
+                if hist_emb is not None and getattr(hist_emb, "shape", None) and hist_emb.shape[0] > 0:
+                    idx = similarity_mod.build_faiss_index(hist_emb)
+                    similarity_score = float(similarity_mod.compute_similarity_score(idx, emb_vec))
             except Exception as e:
-                logger.exception("Similarity calculation failed: %s", e)
+                logger.debug("similarity via embeddings.npy failed: %s", e)
                 similarity_score = 0.0
         else:
-            # fallback
-            if similarity_index is not None and hasattr(similarity_index, "quick_similarity"):
-                similarity_score = float(similarity_index.quick_similarity(full_text))
-            else:
+            # fallback: if similarity_mod exposes compute_similarity_score and an index loader
+            try:
+                # if similarity_mod provides quick_similarity(text) use it
+                if similarity_mod is not None and hasattr(similarity_mod, "compute_similarity_score"):
+                    # but compute_similarity_score expects index+vector; skip unless index available
+                    similarity_score = 0.0
+                elif similarity_mod is not None and hasattr(similarity_mod, "quick_similarity"):
+                    try:
+                        similarity_score = float(similarity_mod.quick_similarity(result.get("full_text", "")))
+                    except Exception:
+                        similarity_score = 0.0
+                else:
+                    similarity_score = 0.0
+            except Exception:
                 similarity_score = 0.0
+
         similarity_score = float(np.clip(similarity_score, 0.0, 1.0))
         result["similarity_score"] = similarity_score
         result["steps"]["text_features"] = "ok"
     except Exception as e:
-        logger.exception("Embedding/similarity error: %s", e)
+        logger.exception("Similarity/embedding failed: %s", e)
         result["errors"].append(f"similarity_error:{e}")
         result["similarity_score"] = 0.0
         result["steps"]["text_features"] = "error"
 
-    # 6) Enrichment (blacklist-only simplified)
+    # -------------------------
+    # 6) Enrichment (blacklist simplified)
+    # -------------------------
     enrichment = {}
     try:
-        if external_lookup is not None and hasattr(external_lookup, "check_blacklist"):
-            bl_flag, bl_reasons = external_lookup.check_blacklist(
-                customer_id=norm_row.get("customer_id"),
-                phone=norm_row.get("phone"),
-                garage_id=norm_row.get("garage_id")
-            )
-            enrichment = {"blacklist_flag": int(bl_flag), "blacklist_reasons": bl_reasons}
+        if external_lookup_mod is not None and hasattr(external_lookup_mod, "check_blacklist"):
+            try:
+                bl_flag, bl_reasons = external_lookup_mod.check_blacklist(
+                    customer_id=norm_row.get("customer_id"),
+                    phone=norm_row.get("phone"),
+                    garage_id=norm_row.get("garage_id")
+                )
+                enrichment = {"blacklist_flag": int(bool(bl_flag)), "blacklist_reasons": bl_reasons or []}
+            except Exception as e:
+                logger.debug("external_lookup.check_blacklist failed: %s", e)
+                enrichment = {"blacklist_flag": 0, "blacklist_reasons": []}
         else:
             enrichment = {"blacklist_flag": 0, "blacklist_reasons": []}
         result["enrichment"] = enrichment
         result["steps"]["enrichment"] = "ok"
     except Exception as e:
-        logger.exception("Enrichment failed: %s", e)
+        logger.exception("Enrichment error: %s", e)
         result["errors"].append(f"enrichment_error:{e}")
         result["enrichment"] = {"blacklist_flag": 0}
         result["steps"]["enrichment"] = "error"
 
+    # -------------------------
     # 7) Anomaly scoring
+    # -------------------------
     anomaly_score = 0.0
     try:
-        if anomaly_detector is not None and hasattr(anomaly_detector, "predict_anomaly_score") and model_utils is not None:
-            # model_utils.get_numeric_matrix expects a DataFrame of numeric features
+        if anomaly_mod is not None and hasattr(anomaly_mod, "predict_anomaly_score") and model_utils_mod is not None:
             X_num = None
             try:
                 if features_df is not None:
-                    X_num = model_utils.get_numeric_matrix(features_df)
+                    X_num = model_utils_mod.get_numeric_matrix(features_df)
                 else:
-                    X_num = model_utils.get_numeric_matrix(pd.DataFrame([feature_row]))
+                    X_num = model_utils_mod.get_numeric_matrix(pd.DataFrame([feature_row]))
             except Exception:
-                # fallback to numeric vector if get_numeric_matrix unavailable
                 X_num = None
-            raw_anom = anomaly_detector.predict_anomaly_score(X_num if X_num is not None else feature_row)
+            raw_anom = anomaly_mod.predict_anomaly_score(X_num if X_num is not None else feature_row)
             anomaly_score = float(_first_or_scalar(raw_anom))
         else:
+            logger.info("Anomaly detector unavailable -> anomaly_score=0.0")
             anomaly_score = 0.0
-            logger.info("Anomaly detector not available; anomaly_score=0.0")
         result["anomaly_score"] = anomaly_score
         result["steps"]["anomaly"] = "ok"
     except Exception as e:
-        logger.exception("Anomaly scoring error: %s", e)
+        logger.exception("Anomaly error: %s", e)
         result["errors"].append(f"anomaly_error:{e}")
-        # heuristic fallback
         try:
             anomaly_score = float(feature_row.get("amount_ratio") or 0.0)
         except Exception:
@@ -389,23 +435,25 @@ def run_single_claim(claim_record: Dict[str, Any], attachments: Optional[List[st
         result["anomaly_score"] = anomaly_score
         result["steps"]["anomaly"] = "fallback"
 
+    # -------------------------
     # 8) Supervised fraud classifier
+    # -------------------------
     fraud_prob = 0.0
     try:
-        if fraud_classifier is not None and hasattr(fraud_classifier, "predict_proba") and model_utils is not None:
+        if fraud_clf_mod is not None and hasattr(fraud_clf_mod, "predict_proba") and model_utils_mod is not None:
             X_num = None
             try:
                 if features_df is not None:
-                    X_num = model_utils.get_numeric_matrix(features_df)
+                    X_num = model_utils_mod.get_numeric_matrix(features_df)
                 else:
-                    X_num = model_utils.get_numeric_matrix(pd.DataFrame([feature_row]))
+                    X_num = model_utils_mod.get_numeric_matrix(pd.DataFrame([feature_row]))
             except Exception:
                 X_num = None
-            raw_prob = fraud_classifier.predict_proba(X_num if X_num is not None else feature_row)
+            raw_prob = fraud_clf_mod.predict_proba(X_num if X_num is not None else feature_row)
             fraud_prob = float(_first_or_scalar(raw_prob))
         else:
+            logger.info("fraud_classifier unavailable -> fraud_prob=0.0")
             fraud_prob = 0.0
-            logger.info("fraud_classifier not available; fraud_prob=0.0")
         result["fraud_prob"] = fraud_prob
         result["steps"]["fraud_classifier"] = "ok"
     except Exception as e:
@@ -414,29 +462,33 @@ def run_single_claim(claim_record: Dict[str, Any], attachments: Optional[List[st
         result["fraud_prob"] = 0.0
         result["steps"]["fraud_classifier"] = "error"
 
-    # 9) Business rules
+    # -------------------------
+    # 9) Business rules (prepare context)
+    # -------------------------
     rule_flags = {}
     try:
         rule_ctx = {
-            "policy_end_date": norm_row.get("policy_end_date"),
             "incident_date": norm_row.get("incident_date"),
-            "policy_id_claim": norm_row.get("policy_id"),
-            "policy_id_record": claim_record.get("policy_id_record"),
+            "policy_id": norm_row.get("policy_id") or claim_record.get("policy_id"),
+            "policy_id_record": claim_record.get("policy_id_record") or norm_row.get("policy_id_record"),
             "claim_amount": norm_row.get("claim_amount"),
-            "median_amount_for_policy": norm_row.get("policy_sum_insured")
+            "median_amount_for_policy": norm_row.get("policy_sum_insured") or norm_row.get("policy_sum_insured")
         }
-        if rules is not None and hasattr(rules, "extract_rule_flags"):
-            rule_flags = rules.extract_rule_flags(rule_ctx)
+        if rules_mod is not None and hasattr(rules_mod, "extract_rule_flags"):
+            rule_flags = rules_mod.extract_rule_flags(rule_ctx)
         else:
             rule_flags = {}
         result["rule_flags"] = rule_flags
         result["steps"]["rules"] = "ok"
     except Exception as e:
-        logger.exception("Rules processing failed: %s", e)
+        logger.exception("Rules extraction failed: %s", e)
         result["errors"].append(f"rules_error:{e}")
+        result["rule_flags"] = {}
         result["steps"]["rules"] = "error"
 
-    # 10) Scoring (compose context)
+    # -------------------------
+    # 10) Scoring: compute final decision
+    # -------------------------
     try:
         missing_info_flag = int(norm_row.get("missing_info_flag", 0))
         scoring_context = {
@@ -448,17 +500,19 @@ def run_single_claim(claim_record: Dict[str, Any], attachments: Optional[List[st
             "normalized": norm_row,
             "input": claim_record
         }
-        if scoring is None or not hasattr(scoring, "compute_final_score"):
-            # conservative fallback: require manual review if scoring not available
-            logger.warning("Scoring module unavailable: forcing manual_review for safety")
+
+        if scoring_mod is None or not hasattr(scoring_mod, "compute_final_score"):
+            logger.warning("Scoring module missing -> conservative manual_review")
             final_decision = {"final_score": None, "action": "manual_review", "breakdown": {}}
         else:
-            final_decision = scoring.compute_final_score(scoring_context)
+            final_decision = scoring_mod.compute_final_score(scoring_context)
+
+        # ensure keys exist
         result["final_score"] = final_decision.get("final_score")
-        result["action"] = final_decision.get("action")
+        result["action"] = final_decision.get("action") or "manual_review"
         result["breakdown"] = final_decision.get("breakdown", {})
         result["steps"]["scoring"] = "ok"
-        logger.info("Scoring result: action=%s score=%s", result["action"], result["final_score"])
+        logger.info("Scoring done action=%s score=%s", result["action"], result["final_score"])
     except Exception as e:
         logger.exception("Scoring error: %s", e)
         result["errors"].append(f"scoring_error:{e}")
@@ -467,7 +521,9 @@ def run_single_claim(claim_record: Dict[str, Any], attachments: Optional[List[st
         result["breakdown"] = {}
         result["steps"]["scoring"] = "error"
 
-    # 11) Explanation generation
+    # -------------------------
+    # 11) Explanation (best-effort)
+    # -------------------------
     try:
         explain_payload = {
             "final_score": result.get("final_score"),
@@ -476,47 +532,54 @@ def run_single_claim(claim_record: Dict[str, Any], attachments: Optional[List[st
             "claim_id": claim_id,
             "brief": (result.get("full_text") or "")[:500]
         }
-        if explain_generator is not None and hasattr(explain_generator, "generate_text_explanation"):
-            explanation = explain_generator.generate_text_explanation(explain_payload)
+        if explain_gen_mod is not None and hasattr(explain_gen_mod, "generate_text_explanation"):
+            try:
+                explanation = explain_gen_mod.generate_text_explanation(explain_payload)
+            except Exception:
+                explanation = f"Action={result.get('action')}. Score={result.get('final_score')}."
         else:
-            # fallback human-friendly explanation generation
+            # human-friendly fallback
             bd = result.get("breakdown") or {}
             explanation = f"Action={result.get('action')}. Score={result.get('final_score')}. Rules: {bd.get('rule_flags', {})}"
         result["explanation"] = explanation
         result["steps"]["explain"] = "ok"
     except Exception as e:
-        logger.exception("Explanation generation failed: %s", e)
+        logger.exception("Explanation failed: %s", e)
         result["errors"].append(f"explain_error:{e}")
         result["explanation"] = ""
         result["steps"]["explain"] = "error"
 
+    # -------------------------
     # 12) Save results (JSON + CSV summary)
+    # -------------------------
     try:
         json_path = _save_result_json(claim_id, result)
         csv_path = _append_result_summary(result)
         result["saved_paths"] = {"json": json_path, "summary_csv": csv_path}
         result["steps"]["save"] = "ok"
     except Exception as e:
-        logger.exception("Saving results failed: %s", e)
+        logger.exception("Save error: %s", e)
         result["errors"].append(f"save_error:{e}")
         result["steps"]["save"] = "error"
 
+    # -------------------------
     # 13) HITL enqueue if manual_review
+    # -------------------------
     try:
         if result.get("action") == "manual_review":
-            if HITL_AVAILABLE:
+            if HITL_AVAILABLE and hasattr(review_queue_mod, "enqueue_for_review"):
                 try:
-                    qid = review_queue.enqueue_for_review(result)
+                    qid = review_queue_mod.enqueue_for_review(result)
                     result["steps"]["hitl_enqueue"] = "ok"
                     result["hitl_queue_id"] = qid
-                    logger.info("Enqueued for HITL: claim_id=%s queue_id=%s", claim_id, qid)
+                    logger.info("Enqueued for HITL queue_id=%s", qid)
                 except Exception as e:
-                    logger.exception("Failed to enqueue HITL: %s", e)
+                    logger.exception("Enqueue HITL failed: %s", e)
                     result["errors"].append(f"hitl_enqueue_error:{e}")
                     result["steps"]["hitl_enqueue"] = "error"
             else:
-                # as a fallback, append to labels or a fallback file so the UI can surface it
-                logger.info("HITL unavailable: will mark hitl_enqueue=skipped and save record for later")
+                # store skipped indicator so UI shows it's waiting but HITL system not available
+                logger.info("HITL unavailable, marking hitl_enqueue as skipped")
                 result["steps"]["hitl_enqueue"] = "skipped"
         else:
             result["steps"]["hitl_enqueue"] = "not_required"
@@ -524,21 +587,25 @@ def run_single_claim(claim_record: Dict[str, Any], attachments: Optional[List[st
         logger.exception("HITL integration error: %s", e)
         result["errors"].append(f"hitl_integration_error:{e}")
 
-    logger.info("Pipeline completed for claim_id=%s action=%s score=%s", claim_id, result.get("action"), result.get("final_score"))
+    logger.info("Pipeline finished claim_id=%s action=%s", claim_id, result.get("action"))
+    # final safety: guarantee action and final_score keys (avoid KeyError in UI)
+    result.setdefault("action", "manual_review")
+    result.setdefault("final_score", result.get("final_score", None))
     return result
+
 
 # ---------------------------
 # Batch runner
 # ---------------------------
 def run_batch(claims_df: pd.DataFrame, attachments_map: Optional[Dict[str, List[str]]] = None, history_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     attachments_map = attachments_map or {}
-    results = []
-    for _, row in claims_df.iterrows():
-        claim = row.to_dict()
+    rows = []
+    for _, r in claims_df.iterrows():
+        claim = r.to_dict()
         att = attachments_map.get(str(claim.get("claim_id")), [])
         try:
             res = run_single_claim(claim, attachments=att, history_df=history_df)
-            results.append({
+            rows.append({
                 "claim_id": res.get("claim_id"),
                 "final_score": res.get("final_score"),
                 "action": res.get("action"),
@@ -547,48 +614,33 @@ def run_batch(claims_df: pd.DataFrame, attachments_map: Optional[Dict[str, List[
                 "similarity_score": res.get("similarity_score")
             })
         except Exception as e:
-            logger.exception("Error processing claim %s: %s", claim.get("claim_id"), e)
-            results.append({
+            logger.exception("Batch row processing failed: %s", e)
+            rows.append({
                 "claim_id": claim.get("claim_id"),
                 "final_score": None,
                 "action": "error"
             })
-    return pd.DataFrame(results)
+    return pd.DataFrame(rows)
+
 
 # ---------------------------
-# Manual test
+# Manual test block
 # ---------------------------
 if __name__ == "__main__":
     import logging as _logging
     _logging.basicConfig(level=_logging.INFO)
 
-    sample_claims = pd.DataFrame([{
-        "claim_id": "C1001",
+    example = {
+        "claim_id": "T1001",
         "customer_id": "C001",
-        "policy_id": "POL-123",
-        "policy_id_record": "POL-123",
-        "claim_amount": 12000,
+        "policy_id": "POL-111",
+        "policy_id_record": "POL-111",
+        "claim_amount": 4500,
         "policy_sum_insured": 50000,
-        "incident_date": "2023-07-10",
-        "description": "Rear bumper damage due to minor collision.",
-        "phone": "9999999999",
-        "garage_id": None,
-        "vin": None,
-        "city": "Pune"
-    }, {
-        "claim_id": "C1002",
-        "customer_id": "C999",
-        "policy_id": "POL-999",
-        "policy_id_record": "POL-000",
-        "claim_amount": 750000,
-        "policy_sum_insured": 50000,
-        "incident_date": "2023-08-01",
-        "description": "Total loss - vehicle stolen, no police report filed.",
-        "phone": "8888888888",
-        "garage_id": "GARAGE-FAKE-123",
-        "vin": "MH12AB1234",
-        "city": "Mumbai"
-    }])
-
-    out = run_batch(sample_claims)
-    logger.info("Batch results:\n%s", out.to_string(index=False))
+        "incident_date": "2024-06-10",
+        "description": "Minor scratch on left door while parking.",
+        "phone": "9876543210",
+        "garage_id": "GAR-001"
+    }
+    res = run_single_claim(example, attachments=[])
+    print(json.dumps(res, indent=2, default=str))

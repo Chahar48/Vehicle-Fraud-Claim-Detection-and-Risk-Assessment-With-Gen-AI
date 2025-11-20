@@ -1,0 +1,103 @@
+{
+  "claim_id": "T1001",
+  "input": {
+    "claim_id": "T1001",
+    "customer_id": "C001",
+    "policy_id": "POL-111",
+    "policy_id_record": "POL-111",
+    "claim_amount": 4500.0,
+    "policy_sum_insured": 50000.0,
+    "incident_date": "2025-11-21",
+    "description": "Minor scratch on left door while parking.",
+    "phone": "9876543210",
+    "garage_id": "GAR-001"
+  },
+  "steps": {
+    "normalize": "fallback",
+    "attachments": "extracted_0",
+    "text": "ok",
+    "numeric_features": "ok",
+    "text_features": "ok",
+    "enrichment": "ok",
+    "anomaly": "fallback",
+    "fraud_classifier": "ok",
+    "rules": "ok",
+    "scoring": "ok",
+    "explain": "ok"
+  },
+  "errors": [
+    "normalize_error:normalize_fields module unavailable",
+    "anomaly_error:Model not found: D:\\AI_My_Projects\\Vehicle-Fraud-Claim-Detection-and-Risk-Assessment-With-Gen-AI\\fraud_detection\\models\\artifacts\\anomaly_detector.pkl"
+  ],
+  "normalized": {
+    "claim_id": "T1001",
+    "customer_id": "C001",
+    "policy_id": "POL-111",
+    "policy_id_record": "POL-111",
+    "claim_amount": 4500.0,
+    "policy_sum_insured": 50000.0,
+    "incident_date": "2025-11-21",
+    "description": "Minor scratch on left door while parking.",
+    "phone": "9876543210",
+    "garage_id": "GAR-001",
+    "missing_info_flag": 0
+  },
+  "full_text": "Minor scratch on left door while parking.",
+  "features": {
+    "claim_id": "T1001",
+    "customer_id": "C001",
+    "claim_amount": 4500.0,
+    "policy_sum_insured": 50000.0,
+    "amount_ratio": 0.09,
+    "claims_last_12m": 0,
+    "days_since_last_claim": -1,
+    "is_new_customer": 1,
+    "missing_amount_flag": 0,
+    "missing_policy_flag": 0,
+    "missing_date_flag": 0
+  },
+  "similarity_score": 0.0,
+  "enrichment": {
+    "blacklist_flag": 0,
+    "blacklist_reasons": []
+  },
+  "anomaly_score": 0.09,
+  "fraud_prob": 0.0,
+  "rule_flags": {
+    "policy_expired": false,
+    "policy_mismatch": false,
+    "claim_too_high": false,
+    "soft_suspicion": false,
+    "missing_policy_record": 0,
+    "missing_incident_date": 0,
+    "missing_median_amount": 0,
+    "reasons": []
+  },
+  "final_score": 0.027,
+  "action": "auto_approve",
+  "breakdown": {
+    "fraud_prob": 0.0,
+    "anomaly_score": 0.09,
+    "similarity_score": 0.0,
+    "blacklist_flag": 0,
+    "missing_info_flag": 0,
+    "rule_flags": {
+      "policy_expired": false,
+      "policy_mismatch": false,
+      "claim_too_high": false,
+      "soft_suspicion": false,
+      "missing_policy_record": 0,
+      "missing_incident_date": 0,
+      "missing_median_amount": 0,
+      "reasons": []
+    },
+    "weights": {
+      "fraud_prob": 0.45,
+      "anomaly_score": 0.3,
+      "similarity_score": 0.15,
+      "blacklist_flag": 0.08,
+      "missing_info_flag": 0.02
+    }
+  },
+  "explanation": "Action=auto_approve. Score=0.027. Rules: {'policy_expired': False, 'policy_mismatch': False, 'claim_too_high': False, 'soft_suspicion': False, 'missing_policy_record': 0, 'missing_incident_date': 0, 'missing_median_amount': 0, 'reasons': []}"
+}

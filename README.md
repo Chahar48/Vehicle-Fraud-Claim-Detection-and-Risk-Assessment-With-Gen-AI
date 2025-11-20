@@ -40,74 +40,74 @@ pip install -r requirements.txt
 
 📌 3. Folder Structure
 fraud-detection-genai/
-│
-├── fraud_detection/
-│   ├── ingestion/
-│   │     ├── email_ingest.py
-│   │     ├── file_router.py
-│   │     └── uploader.py
-│   │
-│   ├── preprocessing/
-│   │     ├── pdf_to_images.py
-│   │     ├── pdf_to_text.py
-│   │     ├── image_to_text.py
-│   │     └── normalize_fields.py
-│   │
-│   ├── extraction/
-│   │     ├── ocr_extractor.py
-│   │     └── pdf_extractor.py
-│   │
-│   ├── features/
-│   │     ├── numeric_features.py
-│   │     └── text_features.py
-│   │
-│   ├── generative_ai/
-│   │     ├── embedder.py
-│   │     └── explain_generator.py
-│   │
-│   ├── models/
-│   │     ├── anomaly_detector.py
-│   │     ├── fraud_classifier.py
-│   │     └── model_utils.py
-│   │
-│   ├── enrichment/
-│   │     └── external_lookup.py
-│   │
-│   ├── decision_engine/
-│   │     ├── rules.py
-│   │     ├── scoring.py
-│   │     └── explainability.py
-│   │
-│   ├── hitl/
-│   │     ├── review_queue.py
-│   │     └── feedback_processor.py
-│   │
-│   ├── storage/
-│   │     └── store.py
-│   │
-│   ├── orchestration/
-│   │     └── pipeline_runner.py
-│   │
-│   ├── serving/
-│   │     └── api_server.py
-│   │
-│   ├── logging_config.py
-│   └── config.py
-│
-├── ui/
-│   └── reviewer_app.py
-│
-├── data/
-│   ├── raw/
-│   ├── processed/
-│   ├── results/
-│   ├── hitl/
-│   └── labels/
-│
-├── run_api.py
-├── pyproject.toml
-├── requirements.txt
-└── setup.py
+       │
+       ├── fraud_detection/
+       │   ├── ingestion/
+       │   │     ├── email_ingest.py
+       │   │     ├── file_router.py
+       │   │     └── uploader.py
+       │   │
+       │   ├── preprocessing/
+       │   │     ├── pdf_to_images.py
+       │   │     ├── pdf_to_text.py
+       │   │     ├── image_to_text.py
+       │   │     └── normalize_fields.py
+       │   │
+       │   ├── extraction/
+       │   │     ├── ocr_extractor.py
+       │   │     └── pdf_extractor.py
+       │   │
+       │   ├── features/
+       │   │     ├── feature_builder.py
+       │   │     └── similarity_index.py
+       │   │
+       │   ├── generative_ai/
+       │   │     ├── embedder.py
+       │   │     └── explain_generator.py
+       │   │
+       │   ├── models/
+       │   │     ├── anomaly_detector.py
+       │   │     ├── fraud_classifier.py
+       │   │     └── model_utils.py
+       │   │
+       │   ├── enrichment/
+       │   │     └── external_lookup.py
+       │   │
+       │   ├── decision_engine/
+       │   │     ├── rules.py
+       │   │     ├── scoring.py
+       │   │     └── explainability.py
+       │   │
+       │   ├── hitl/
+       │   │     ├── review_queue.py
+       │   │     └── feedback_processor.py
+       │   │
+       │   ├── storage/
+       │   │     └── store.py
+       │   │
+       │   ├── orchestration/
+       │   │     └── pipeline_runner.py
+       │   │
+       │   ├── serving/
+       │   │     └── api_server.py
+       │   │
+       │   ├── logging_config.py
+       │   └── config.py
+       │
+       ├── ui/
+       │   └── reviewer_app.py
+       │
+       ├── data/
+       │   ├── raw/
+       │   ├── processed/
+       │   ├── results/
+       │   ├── hitl/
+       │   └── labels/
+       │
+       ├── run_api.py
+       ├── pyproject.toml
+       ├── requirements.txt
+       └── setup.py
 
 📌 4. Full System Architecture (Phases 1–18)
 🔵 PHASE 1–3: Ingestion
