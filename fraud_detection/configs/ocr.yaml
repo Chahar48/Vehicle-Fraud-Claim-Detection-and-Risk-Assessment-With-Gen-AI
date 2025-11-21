@@ -5,8 +5,8 @@ ocr:
   max_pages: 20
 
 pdf:
-  prefer_text_extraction: true      # use PyMuPDF/pdfminer if text available
-  fallback_to_ocr: true             # if PDF is scanned
+  prefer_text_extraction: true
+  fallback_to_ocr: true
 
 image:
   allowed_formats:
@@ -14,7 +14,7 @@ image:
     - jpeg
     - png
   resize_width: 1000
-  enable_preprocessing: true        # grayscale, thresholding
+  enable_preprocessing: true
 
 text_cleaning:
   remove_special_chars: true

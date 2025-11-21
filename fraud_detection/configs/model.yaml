@@ -1,51 +1,27 @@
-# ============================================================
-# MODEL CONFIGURATION FILE
-# fraud_detection/configs/model.yaml
-# ============================================================
-# This file defines:
-# - LLM model for claim extraction (ChatGroq)
-# - Fraud classifier
-# - Anomaly detector
-# - Embeddings model
-# - Scoring weights
-# - Decision thresholds
-# ============================================================
-
-# ------------------------------------------------------------
-# 1. LLM MODEL FOR CLAIM EXTRACTION (PHASE 5)
-# ------------------------------------------------------------
+# Model & scoring configuration
 extraction_model:
-  provider: "groq"                        # groq or openai (switch anytime)
-  model_name: "llama-3.1-70b-versatile"   # BEST model on Groq for extraction
-  temperature: 0.0                        # deterministic extraction
+  provider: "groq"                        # groq or openai
+  model_name: "llama-3.1-70b-versatile"
+  temperature: 0.0
   max_tokens: 2048
 
-# ------------------------------------------------------------
-# 2. FRAUD CLASSIFIER CONFIGURATION
-# ------------------------------------------------------------
 models:
   fraud_classifier:
     enabled: true
     model_path: "fraud_detection/models/artifacts/fraud_classifier.pkl"
-    probability_threshold: 0.55     # > 0.55 → increased fraud likelihood
+    probability_threshold: 0.55
 
   anomaly_detector:
     enabled: true
     model_path: "fraud_detection/models/artifacts/anomaly_detector.pkl"
     contamination: 0.05
 
-# ------------------------------------------------------------
-# 3. TEXT EMBEDDINGS FOR SIMILARITY SCORE
-# ------------------------------------------------------------
 embeddings:
   enabled: true
   provider: "sentence-transformers"
   model_name: "all-MiniLM-L6-v2"
   similarity_threshold: 0.65
 
-# ------------------------------------------------------------
-# 4. WEIGHTS FOR FINAL FRAUD SCORING
-# ------------------------------------------------------------
 scoring:
   weights:
     rules_score: 0.40
@@ -53,12 +29,7 @@ scoring:
     anomaly_score: 0.10
     text_similarity_score: 0.10
 
-# ------------------------------------------------------------
-# 5. DECISION THRESHOLDS FOR OUTCOME
-# ------------------------------------------------------------
 thresholds:
-  approve_below: 30              # fraud_score < 30 → Auto-approve
-  manual_review_between:
-    - 30                         # 30–70 → Human Review (HITL)
-    - 70
-  reject_above: 70               # fraud_score > 70 → Reject (High risk)
+  approve_below: 30
+  manual_review_between: [30, 70]
+  reject_above: 70

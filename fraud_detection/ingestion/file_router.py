@@ -11,30 +11,33 @@ Responsibilities:
 Does NOT move/copy files. Use file_saver.save_file() for persistence.
 """
 
+from __future__ import annotations
 import mimetypes
 import os
 from pathlib import Path
-import yaml
 from typing import Dict
+import yaml
 
-from fraud_detection.logging.logger import get_logger
+# defensive logger
+try:
+    from fraud_detection.logging.logger import get_logger
+    logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger("file_router")
+    if not logger.handlers:
+        logging.basicConfig(level=logging.INFO)
 
-logger = get_logger(__name__)
-
-# ---------------------------
-# Project root resolution via FD_PROJECT_ROOT or fallback
-# ---------------------------
+# Project root
 FD_PROJECT_ROOT = os.environ.get("FD_PROJECT_ROOT")
 if FD_PROJECT_ROOT:
     PROJECT_ROOT = Path(FD_PROJECT_ROOT).resolve()
 else:
     PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-# ---------------------------
-# Load allowed extensions from config, fallback to default
-# ---------------------------
+# Load allowed extensions from config
 def _load_allowed_extensions() -> set:
-    cfg = PROJECT_ROOT / "fraud_detection" / "configs" / "app.yaml"
+    cfg = PROJECT_ROOT / "configs" / "app.yaml"
     if cfg.exists():
         try:
             with cfg.open("r", encoding="utf-8") as fh:
@@ -49,9 +52,6 @@ def _load_allowed_extensions() -> set:
 ALLOWED_EXTENSIONS = _load_allowed_extensions()
 
 
-# ---------------------------
-# Utilities
-# ---------------------------
 def get_extension(path: str) -> str:
     return Path(path).suffix.lower().lstrip(".")
 
@@ -59,7 +59,7 @@ def get_extension(path: str) -> str:
 def validate_file_type(path: str) -> str:
     ext = get_extension(path)
     if ext not in ALLOWED_EXTENSIONS:
-        raise ValueError(f"Unsupported extension '{ext}'. Allowed: {ALLOWED_EXTENSIONS}")
+        raise ValueError(f"Unsupported extension '{ext}'. Allowed: {sorted(ALLOWED_EXTENSIONS)}")
     return ext
 
 
@@ -85,13 +85,13 @@ def route_metadata(path: str) -> Dict[str, str]:
 
     if ext in {"jpg", "jpeg", "png"} or (mime and mime.startswith("image/")):
         category = "image"
-    elif ext == "csv" or (mime and mime in {"text/csv"}):
+    elif ext == "csv" or (mime and mime == "text/csv"):
         category = "csv"
     else:
         category = "document"
 
     meta = {
-        "original_path": str(p.resolve()),
+        "original_path": str(p.resolve()) if p.exists() else str(Path(path).absolute()),
         "extension": ext,
         "mime": mime,
         "category": category,

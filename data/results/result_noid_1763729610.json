@@ -1,0 +1,124 @@
+{
+  "claim_id": "noid_1763729610",
+  "input": {
+    "claim_id": "",
+    "customer_id": "",
+    "policy_id": "",
+    "policy_id_record": "",
+    "claim_amount": 0.0,
+    "policy_sum_insured": 0.0,
+    "incident_date": "2025-11-21",
+    "description": "",
+    "phone": "",
+    "garage_id": ""
+  },
+  "normalized": {
+    "claim_id": "2025-11-21",
+    "customer_id": "2025-11-21",
+    "policy_id": "2025-11-21",
+    "policy_id_record": "2025-11-21",
+    "claim_amount": 0.0,
+    "policy_sum_insured": 0.0,
+    "incident_date": "2025-11-21",
+    "description": "",
+    "phone": "20251121",
+    "garage_id": "2025-11-21",
+    "missing_amount_flag": 0,
+    "missing_info_flag": 0,
+    "_field_confidence": {
+      "claim_id": 0.6,
+      "customer_id": 0.6,
+      "policy_id": 0.6,
+      "policy_id_record": 0.6,
+      "claim_amount": 1.0,
+      "policy_sum_insured": 1.0,
+      "incident_date": 1.0,
+      "description": 0.0,
+      "phone": 0.6,
+      "garage_id": 0.6
+    }
+  },
+  "features": {
+    "claim_id": "2025-11-21",
+    "customer_id": "2025-11-21",
+    "claim_amount": 0.0,
+    "policy_sum_insured": 0.0,
+    "amount_ratio": 0.0,
+    "claims_last_12m": 0,
+    "days_since_last_claim": -1,
+    "is_new_customer": 1,
+    "missing_amount_flag": 0,
+    "missing_policy_flag": 0,
+    "missing_date_flag": 0
+  },
+  "extracted_texts": [],
+  "enrichment": {
+    "blacklist_flag": 0,
+    "blacklist_reasons": []
+  },
+  "steps": {
+    "normalize": "ok",
+    "attachments": "extracted_0",
+    "text": "ok",
+    "numeric_features": "ok",
+    "text_features": "ok",
+    "enrichment": "ok",
+    "anomaly": "fallback",
+    "fraud_classifier": "ok",
+    "rules": "ok",
+    "scoring": "ok",
+    "explain": "ok"
+  },
+  "errors": [
+    "anomaly_error:Model not found: D:\\AI_My_Projects\\Vehicle-Fraud-Claim-Detection-and-Risk-Assessment-With-Gen-AI\\fraud_detection\\models\\artifacts\\anomaly_detector.pkl"
+  ],
+  "full_text": "",
+  "similarity_score": 0.0,
+  "anomaly_score": 0.0,
+  "fraud_prob": 0.0,
+  "rule_flags": {
+    "policy_expired": false,
+    "policy_mismatch": 0,
+    "claim_too_high": 0,
+    "soft_suspicion": 0,
+    "missing_policy_record": 0,
+    "missing_incident_date": 0,
+    "missing_median_amount": 1,
+    "invalid_incident_date": 0,
+    "incident_date_in_future": 0,
+    "reasons": [
+      "Median amount for this policy unavailable; amount checks limited."
+    ]
+  },
+  "final_score": 0.3,
+  "action": "auto_approve",
+  "breakdown": {
+    "fraud_prob": 0.0,
+    "anomaly_score": 0.0,
+    "similarity_score": 0.0,
+    "blacklist_flag": 0,
+    "missing_info_flag": 0,
+    "rule_flags": {
+      "policy_expired": false,
+      "policy_mismatch": 0,
+      "claim_too_high": 0,
+      "soft_suspicion": 0,
+      "missing_policy_record": 0,
+      "missing_incident_date": 0,
+      "missing_median_amount": 1,
+      "invalid_incident_date": 0,
+      "incident_date_in_future": 0,
+      "reasons": [
+        "Median amount for this policy unavailable; amount checks limited."
+      ]
+    },
+    "weights": {
+      "fraud_prob": 0.45,
+      "anomaly_score": 0.3,
+      "similarity_score": 0.15,
+      "blacklist": 0.08,
+      "missing_info": 0.02
+    }
+  },
+  "explanation": "- Supervised model indicates LOW risk (0% fraud probability).\n- Numeric features appear normal (anomaly score 0.00).\n- Description similarity to known fraud cases is low (similarity 0.00).\n- No blacklist matches detected.\n- All required information is present.\n- Rule triggered: Median amount for the policy is unavailable; amount comparison limited.\n- Rule: Median amount for this policy unavailable; amount checks limited."
+}

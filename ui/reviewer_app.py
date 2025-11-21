@@ -147,8 +147,8 @@ with tab_upload:
             customer_id = st.text_input("Customer ID")
             policy_id = st.text_input("Policy ID (Claimed)")
             policy_id_record = st.text_input("Policy ID (Official)")
-            claim_amount = safe_float(st.text_input("Claim Amount"))
-            policy_sum_insured = safe_float(st.text_input("Policy Sum Insured"))
+            claim_amount = safe_float(st.text_input("Claim Amount", value="0"))
+            policy_sum_insured = safe_float(st.text_input("Policy Sum Insured", value="0"))
 
         with col2:
             incident_date = st.date_input("Incident Date")

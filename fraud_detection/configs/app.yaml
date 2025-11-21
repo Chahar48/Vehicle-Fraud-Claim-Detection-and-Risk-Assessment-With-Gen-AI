@@ -10,10 +10,11 @@ api:
   max_upload_size_mb: 20
 
 storage:
-  raw_data_path: "fraud_detection/data/raw"
-  processed_data_path: "fraud_detection/data/processed"
-  features_path: "fraud_detection/data/features"
-  labels_path: "fraud_detection/data/labels"
+  # Use top-level data/ folders in your repo (matches final architecture)
+  raw_data_path: "data/raw"
+  processed_data_path: "data/processed"
+  features_path: "data/features"
+  labels_path: "data/labels"
 
 files:
   allowed_extensions:
@@ -24,7 +25,9 @@ files:
     - png
 
 logging:
-  config_path: "fraud_detection/logging/logging_config.yaml"
+  # Points to the module or YAML path in the repo. Adjust if you store YAML under configs/.
+  # If you keep a YAML logging config, set path to "configs/logging_config.yaml"
+  config_path: "fraud_detection/logging_config.py"
   log_level: "INFO"
 
 pipeline:

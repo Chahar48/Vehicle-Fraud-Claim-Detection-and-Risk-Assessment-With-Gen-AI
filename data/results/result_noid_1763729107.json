@@ -1,0 +1,110 @@
+{
+  "claim_id": "noid_1763729107",
+  "input": {
+    "claim_id": "",
+    "customer_id": "",
+    "policy_id": "",
+    "policy_id_record": "",
+    "claim_amount": 0.0,
+    "policy_sum_insured": 0.0,
+    "incident_date": "2025-11-21",
+    "description": "",
+    "phone": "",
+    "garage_id": ""
+  },
+  "normalized": {
+    "claim_id": null,
+    "customer_id": null,
+    "policy_id": null,
+    "policy_id_record": null,
+    "claim_amount": 0.0,
+    "policy_sum_insured": 0.0,
+    "incident_date": "2025-11-21",
+    "description": "",
+    "phone": null,
+    "garage_id": null,
+    "missing_amount_flag": 0,
+    "missing_info_flag": 1
+  },
+  "features": {
+    "claim_id": null,
+    "customer_id": null,
+    "claim_amount": 0.0,
+    "policy_sum_insured": 0.0,
+    "amount_ratio": 0.0,
+    "claims_last_12m": 0,
+    "days_since_last_claim": -1,
+    "is_new_customer": 1,
+    "missing_amount_flag": 0,
+    "missing_policy_flag": 0,
+    "missing_date_flag": 0
+  },
+  "extracted_texts": [],
+  "enrichment": {
+    "blacklist_flag": 0,
+    "blacklist_reasons": []
+  },
+  "steps": {
+    "normalize": "ok",
+    "attachments": "extracted_0",
+    "text": "ok",
+    "numeric_features": "ok",
+    "text_features": "ok",
+    "enrichment": "ok",
+    "anomaly": "fallback",
+    "fraud_classifier": "ok",
+    "rules": "ok",
+    "scoring": "ok",
+    "explain": "ok"
+  },
+  "errors": [
+    "anomaly_error:Model not found: D:\\AI_My_Projects\\Vehicle-Fraud-Claim-Detection-and-Risk-Assessment-With-Gen-AI\\fraud_detection\\models\\artifacts\\anomaly_detector.pkl"
+  ],
+  "full_text": "",
+  "similarity_score": 0.0,
+  "anomaly_score": 0.0,
+  "fraud_prob": 0.0,
+  "rule_flags": {
+    "policy_expired": false,
+    "policy_mismatch": false,
+    "claim_too_high": false,
+    "soft_suspicion": false,
+    "missing_policy_record": 1,
+    "missing_incident_date": 0,
+    "missing_median_amount": 1,
+    "reasons": [
+      "Official policy record missing or not provided.",
+      "Median amount for this policy unavailable; amount checks limited."
+    ]
+  },
+  "final_score": 0.4,
+  "action": "manual_review",
+  "breakdown": {
+    "fraud_prob": 0.0,
+    "anomaly_score": 0.0,
+    "similarity_score": 0.0,
+    "blacklist_flag": 0,
+    "missing_info_flag": 1,
+    "rule_flags": {
+      "policy_expired": false,
+      "policy_mismatch": false,
+      "claim_too_high": false,
+      "soft_suspicion": false,
+      "missing_policy_record": 1,
+      "missing_incident_date": 0,
+      "missing_median_amount": 1,
+      "reasons": [
+        "Official policy record missing or not provided.",
+        "Median amount for this policy unavailable; amount checks limited."
+      ]
+    },
+    "weights": {
+      "fraud_prob": 0.45,
+      "anomaly_score": 0.3,
+      "similarity_score": 0.15,
+      "blacklist_flag": 0.08,
+      "missing_info_flag": 0.02
+    }
+  },
+  "explanation": "Action=manual_review. Score=0.4. Rules: {'policy_expired': False, 'policy_mismatch': False, 'claim_too_high': False, 'soft_suspicion': False, 'missing_policy_record': 1, 'missing_incident_date': 0, 'missing_median_amount': 1, 'reasons': ['Official policy record missing or not provided.', 'Median amount for this policy unavailable; amount checks limited.']}"
+}

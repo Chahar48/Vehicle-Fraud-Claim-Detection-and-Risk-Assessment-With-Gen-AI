@@ -13,8 +13,8 @@ rules:
   high_claim_amount:
     enabled: true
     penalty: 20
-    ratio_threshold: 0.30       # claim_amount / sum_insured > 30%
-  
+    ratio_threshold: 0.30
+
   suspicious_description_keywords:
     enabled: true
     penalty: 15
@@ -28,7 +28,7 @@ rules:
   repeated_claims_same_customer:
     enabled: true
     penalty: 10
-    threshold: 3                 # more than 3 claims in 6 months
+    threshold: 3
 
   claim_after_policy_expiry:
     enabled: true
